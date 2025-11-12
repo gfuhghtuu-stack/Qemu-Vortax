@@ -8,6 +8,8 @@ Run any operating system (ISO, QCOW2, or compressed archive) directly on **GitHu
 
 ![Forks](https://img.shields.io/github/forks/qemuvortax/qemuvortax?style=for-the-badge&logo=github&logoColor=white&color=blue)
 
+![GitHub forks](https://img.shields.io/github/forks/qemuvortax/qemuvortax?style=for-the-badge&logo=github&logoColor=white&color=00bfff)
+
 ---
 
 ## ⚙️ Overview
