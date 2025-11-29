@@ -1,4 +1,4 @@
-name: Qemu-Vortax V 1.8
+name: Qemu-Vortax V 2.1
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ on:
       boot_mode:
         description: 'Choose boot type: iso or qcow2'
         required: true
-        default: 'iso'
+        default: 'qcow2'
       source_url:
         description: 'Custom source URL (optional)'
         required: false
@@ -22,7 +22,7 @@ on:
       runtime:
         description: 'Runtime duration in minutes (default 350)'
         required: false
-        default: '350'
+        default: '335'
       connection_method:
         description: 'Choose connection method: tailscale or ngrok'
         required: true
@@ -35,6 +35,14 @@ on:
         description: 'Choose firmware mode: UEFI or BIOS (default UEFI)'
         required: true
         default: 'BIOS'
+      vnc_password:
+        description: 'VNC password'
+        required: true
+        default: 'runner'
+      upload_qcow2:
+        description: 'Upload QCOW2 file to Mega: yes or no'
+        required: true
+        default: 'yes'
 
 permissions:
   contents: read
@@ -57,24 +65,34 @@ jobs:
 
       - name: Prepare user and sudo
         run: |
-          echo "${USERNAME}:${PASSWORD}" | sudo chpasswd
-          echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/${USERNAME}
-          sudo mkdir -p /mnt/tmp /mnt/cache
-          sudo chmod -R 777 /mnt/tmp /mnt/cache
+          echo "Setting password for user..."
+          echo "${USERNAME}:${PASSWORD}" | sudo chpasswd > /dev/null 2>&1
+          echo "Configuring sudoers..."
+          echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/${USERNAME} > /dev/null 2>&1
+          echo "Creating temp directories..."
+          sudo mkdir -p /mnt/tmp /mnt/cache > /dev/null 2>&1
+          echo "Fixing permissions for temp directories..."
+          sudo chmod -R 777 /mnt/tmp /mnt/cache > /dev/null 2>&1
 
       - name: Setup Connection (Tailscale or Ngrok)
         run: |
           METHOD="${{ github.event.inputs.connection_method }}"
           if [ "$METHOD" = "tailscale" ]; then
-            curl -fsSL https://tailscale.com/install.sh | sudo sh
+            echo "Installing Tailscale..."
+            curl -fsSL https://tailscale.com/install.sh | sudo sh > /dev/null 2>&1
+            echo "Starting Tailscale..."
             sudo tailscale up --authkey "${TAILSCALE_AUTHKEY}" --hostname "gh-xfce-vm-${{ github.run_id }}" --accept-routes --accept-dns=false
             TS_IP=$(sudo tailscale ip -4 | head -n1)
             echo "CONNECTION_IP=$TS_IP" >> $GITHUB_ENV
             echo "CONNECTION_TYPE=Tailscale" >> $GITHUB_ENV
           elif [ "$METHOD" = "ngrok" ]; then
-            wget -q -O ngrok.zip https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.zip
-            unzip -q ngrok.zip
-            sudo mv ngrok /usr/local/bin/
+            echo "Downloading Ngrok..."
+            wget -q -O ngrok.zip https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.zip > /dev/null 2>&1
+            echo "Extracting Ngrok..."
+            unzip -q ngrok.zip > /dev/null 2>&1
+            echo "Installing Ngrok..."
+            sudo mv ngrok /usr/local/bin/ > /dev/null 2>&1
+            echo "Configuring Ngrok auth..."
             ngrok config add-authtoken "${NGROK_AUTH}"
             echo "CONNECTION_TYPE=Ngrok" >> $GITHUB_ENV
           else
@@ -83,38 +101,63 @@ jobs:
 
       - name: Install XFCE + RDP + NoMachine
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y jq tigervnc-viewer wmctrl wget internetarchive
-          wget -q https://web9001.nomachine.com/download/9.2/Linux/nomachine_9.2.18_3_amd64.deb -O nomachine.deb
-          sudo dpkg -i nomachine.deb || sudo apt-get -f install -y
-          rm nomachine.deb
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xfce4 xfce4-goodies xorg dbus-x11 xrdp
-          echo "startxfce4" | sudo tee /home/${USERNAME}/.xsession
-          sudo chown ${USERNAME}:${USERNAME} /home/${USERNAME}/.xsession
-          echo "exec startxfce4" | sudo tee /etc/skel/.xsession
-          echo "startxfce4" | sudo tee /etc/skel/.xinitrc
-          sudo ufw allow 4000/tcp
-          sudo ufw allow 4011:4999/tcp
-          sudo ufw allow 5900/tcp
-          sudo ufw allow 3389/tcp
-          sudo ufw --force enable || true
-          sudo systemctl enable --now xrdp
-          sudo systemctl restart xrdp
+          echo "Updating package lists..."
+          sudo apt-get update -qq > /dev/null 2>&1
+          echo "Installing MegaTools + pip..."
+          sudo apt install -y megatools python3-pip > /dev/null 2>&1
+          echo "Installing Python libs..."
+          pip install rich requests > /dev/null 2>&1
+          echo "Downloading Mega CLI..."
+          curl -L "https://gitlab.com/MR.English2008/Mega_Gen/-/raw/main/maga_gen_cli.py" -o mega_gen_cli.py > /dev/null 2>&1
+          chmod +x mega_gen_cli.py > /dev/null 2>&1
+          echo "Running Mega CLI..."
+          python3 mega_gen_cli.py > /dev/null 2>&1
+          echo "Downloading virtio-win.iso "
+          sudo wget -O /mnt/virtio-win.iso "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.96/virtio-win.iso" > /dev/null 2>&1
+          echo "Installing VNC, wmctrl, wget, IA..."
+          sudo apt-get install -y jq tigervnc-viewer wmctrl wget internetarchive genisoimage > /dev/null 2>&1
+          echo "Downloading NoMachine..."
+          wget -q https://web9001.nomachine.com/download/9.2/Linux/nomachine_9.2.18_3_amd64.deb -O nomachine.deb > /dev/null 2>&1
+          echo "Installing NoMachine..."
+          sudo dpkg -i nomachine.deb > /dev/null 2>&1 || sudo apt-get -f install -y > /dev/null 2>&1
+          rm nomachine.deb > /dev/null 2>&1
+          echo "Installing XFCE + XRDP..."
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xfce4 xfce4-goodies xorg dbus-x11 xrdp > /dev/null 2>&1
+          echo "Configuring .xsession..."
+          echo "startxfce4" | sudo tee /home/${USERNAME}/.xsession > /dev/null 2>&1
+          sudo chown ${USERNAME}:${USERNAME} /home/${USERNAME}/.xsession > /dev/null 2>&1
+          echo "Configuring system xsession..."
+          echo "exec startxfce4" | sudo tee /etc/skel/.xsession > /dev/null 2>&1
+          echo "startxfce4" | sudo tee /etc/skel/.xinitrc > /dev/null 2>&1
+          echo "Configuring firewall..."
+          sudo ufw allow 4000/tcp > /dev/null 2>&1
+          sudo ufw allow 4011:4999/tcp > /dev/null 2>&1
+          sudo ufw allow 5900/tcp > /dev/null 2>&1
+          sudo ufw allow 3389/tcp > /dev/null 2>&1
+          sudo ufw --force enable > /dev/null 2>&1 || true
+          echo "Starting XRDP..."
+          sudo systemctl enable --now xrdp > /dev/null 2>&1
+          sudo systemctl restart xrdp > /dev/null 2>&1
 
       - name: Install QEMU, OVMF, and components
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-system-x86 ovmf novnc websockify wget curl unzip p7zip-full unrar-free tar python3-pip
-          pip install internetarchive
-          git clone https://github.com/stck-lzm/badown ~/badown
-          chmod +x ~/badown/badown
-          sudo touch ~/badown/.badown.tmp
-
+          echo "Updating package lists..."
+          sudo apt-get update -qq > /dev/null 2>&1
+          echo "Installing QEMU + components..."
+          sudo apt-get install -y -qq qemu-system-x86 ovmf novnc websockify wget curl unzip p7zip-full unrar-free tar python3-pip > /dev/null 2>&1
+          echo "Installing internetarchive..."
+          pip install internetarchive > /dev/null 2>&1
+          echo "Cloning badown..."
+          git clone https://github.com/stck-lzm/badown ~/badown > /dev/null 2>&1
+          chmod +x ~/badown/badown > /dev/null 2>&1
+          sudo touch ~/badown/.badown.tmp > /dev/null 2>&1
+          
       - name: Determine source URL
         id: determine_url
         run: |
           CHOICE="${{ github.event.inputs.system_choice }}"
           USER_URL="${{ github.event.inputs.source_url }}"
+          BOOT_MODE="${{ github.event.inputs.boot_mode }}"
 
           declare -A ISO_URLS
           ISO_URLS["bazite"]="https://download.bazzite.gg/bazzite-stable-live.iso"
@@ -137,22 +180,34 @@ jobs:
           QCOW2_URLS["mint"]="https://www.mediafire.com/file/a4qyactev4kzc0q/mint.7z/"
           QCOW2_URLS["pop_os"]="https://www.mediafire.com/file/lbrebo479z4fq3g/pop_os.7z/"
           QCOW2_URLS["bliss"]="https://www.mediafire.com/file/2zuxhk4dtqa735l/bliss.7z/"
-          QCOW2_URLS["win7"]="https://www.mediafire.com/file/p3gkso164vchyvs/win7.7z/"
+          QCOW2_URLS["XP"]="https://www.mediafire.com/file/nbfd1zer1zjnm7c/XP.7z"
+          QCOW2_URLS["Vista"]="https://www.mediafire.com/file/f9fqa9oupypugbo/Vista.7z"
+          QCOW2_URLS["win7"]="https://www.mediafire.com/file/py5c5n111ns72x0/win7.7z"
+          QCOW2_URLS["win8.1"]="https://www.mediafire.com/file/tn4ojkrkg2cbvcs/win8.1.7z"
+          QCOW2_URLS["win10"]="https://www.mediafire.com/file/uae3un0o27obbgv/win10.7z"
+          QCOW2_URLS["win11"]="https://www.mediafire.com/file/cfcaoebixpl0j8m/win11.7z"
           
           FINAL_URL="$USER_URL"
           if [[ -z "$FINAL_URL" && -n "$CHOICE" ]]; then
-            FINAL_URL="${ISO_URLS[$CHOICE]}"
-            if [[ -z "$FINAL_URL" ]]; then
+            if [[ "$BOOT_MODE" == "iso" ]]; then
+              FINAL_URL="${ISO_URLS[$CHOICE]}"
+            elif [[ "$BOOT_MODE" == "qcow2" ]]; then
               FINAL_URL="${QCOW2_URLS[$CHOICE]}"
             fi
+           
+            if [[ -z "$FINAL_URL" ]]; then
+               echo "::error::No valid URL found for choice '$CHOICE' with boot_mode '$BOOT_MODE'."
+               exit 1
+            fi
           fi
-
+       
           if [[ -z "$FINAL_URL" ]]; then
-            FINAL_URL="${ISO_URLS["bliss_gapps"]}"
+            FINAL_URL="${ISO_URLS["bliss"]}" 
+            echo "::notice::No system choice provided. Defaulting to Bliss ISO."
           fi
 
           echo "FINAL_SOURCE_URL=$FINAL_URL" >> $GITHUB_ENV
-
+          
       - name: Configure VM specs
         run: |
           DISK=60
@@ -231,7 +286,6 @@ jobs:
             sudo mv "$FILE_PATH" "$HOME_PATH/${VM}.iso"
             sudo qemu-img create -f qcow2 "$MNT_PATH/${VM}.qcow2" "${DISK}G"
           elif [[ "$EXT" == *"iso"* && "$MODE" == "qcow2" ]]; then
-            echo "::warning title=ISO Detected::User chose qcow2 mode but ISO provided. Proceeding with ISO."
             sudo mv "$FILE_PATH" "$HOME_PATH/${VM}.iso"
             sudo qemu-img create -f qcow2 "$MNT_PATH/${VM}.qcow2" "${DISK}G"
           elif [[ "$EXT" == *"zip"* || "$EXT" == *"7z"* || "$EXT" == *"rar"* || "$EXT" == *"tar"* || "$EXT" == *"gzip"* ]]; then
@@ -249,14 +303,26 @@ jobs:
             if [ -n "$FOUND" ]; then
               sudo mv "$FOUND" "$MNT_PATH/${VM}.qcow2"
             else
-              echo "::error::No QCOW2 or IMG found inside archive."
-              exit 1
+              if [ ! -f "$HOME_PATH/${VM}.iso" ] && [ ! -f "$MNT_PATH/${VM}.qcow2" ]; then
+                ARCHIVE_FOUND=$(find "$TEMP_PATH" -type f -iname "*.tar.gz" -o -iname "*.tar" -o -iname "*.zip" -o -iname "*.7z" | head -n1)
+                if [ -n "$ARCHIVE_FOUND" ]; then
+                    mkdir -p "$TEMP_PATH/unpack"
+                    EXT=$(file -b --mime-type "$ARCHIVE_FOUND")
+                    if [[ "$EXT" == *"zip"* ]]; then
+                        unzip -q "$ARCHIVE_FOUND" -d "$TEMP_PATH/unpack"
+                    elif [[ "$EXT" == *"7z"* ]]; then
+                        7z x "$ARCHIVE_FOUND" -o"$TEMP_PATH/unpack" > /dev/null
+                    else
+                        tar -xf "$ARCHIVE_FOUND" -C "$TEMP_PATH/unpack"
+                    fi
+                    mkisofs -o "$HOME_PATH/${VM}.iso" -b boot/isolinux/isolinux.bin -c boot/isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table -J -R "$TEMP_PATH/unpack"
+                    rm -rf "$TEMP_PATH/unpack"
+                fi
+              fi
             fi
-          else
-            sudo mv "$FILE_PATH" "$MNT_PATH/${VM}.qcow2"
           fi
-
           sudo rm -rf "$TEMP_PATH"
+
           
       - name: Upload badown log
         if: always()
@@ -300,12 +366,15 @@ jobs:
                 -device virtio-blk-pci,drive=hd0 \
                 -drive if=pflash,format=raw,readonly=on,file="$CODE_PATH" \
                 -drive if=pflash,format=raw,file="$VARS_PATH" \
-                -vnc :0 \
+                -vnc :0,password=on \
+                -monitor tcp:localhost:4444,server,nowait \
                 -display none \
                 -netdev user,id=net0 \
                 -device e1000,netdev=net0 \
                 -device usb-ehci,id=ehci \
                 -device usb-tablet,bus=ehci.0 \
+                -drive file=/mnt/virtio-win.iso,media=cdrom,if=none,id=cd1 \
+                -device ide-cd,bus=ide.1,drive=cd1 \
                 -name "$VM" &
             else
               sudo qemu-system-x86_64 \
@@ -317,12 +386,15 @@ jobs:
                 -drive if=pflash,format=raw,readonly=on,file="$CODE_PATH" \
                 -drive if=pflash,format=raw,file="$VARS_PATH" \
                 -boot c \
-                -vnc :0 \
+                -vnc :0,password=on \
+                -monitor tcp:localhost:4444,server,nowait \
                 -display none \
                 -netdev user,id=net0 \
                 -device e1000,netdev=net0 \
                 -device usb-ehci,id=ehci \
                 -device usb-tablet,bus=ehci.0 \
+                -drive file=/mnt/virtio-win.iso,media=cdrom,if=none,id=cd1 \
+                -device ide-cd,bus=ide.1,drive=cd1 \
                 -name "$VM" &
             fi
           else
@@ -335,12 +407,15 @@ jobs:
                 -boot d \
                 -cdrom "$ISO_PATH" \
                 -hda "$DISK_PATH" \
-                -vnc :0 \
+                -vnc :0,password=on \
+                -monitor tcp:localhost:4444,server,nowait \
                 -display none \
                 -netdev user,id=net0 \
                 -device e1000,netdev=net0 \
                 -device usb-ehci,id=ehci \
                 -device usb-tablet,bus=ehci.0 \
+                -drive file=/mnt/virtio-win.iso,media=cdrom,if=none,id=cd1 \
+                -device ide-cd,bus=ide.1,drive=cd1 \
                 -name "$VM" &
             else
               sudo qemu-system-x86_64 \
@@ -350,109 +425,18 @@ jobs:
                 -m ${RAM}G \
                 -hda "$DISK_PATH" \
                 -boot c \
-                -vnc :0 \
+                -vnc :0,password=on \
+                -monitor tcp:localhost:4444,server,nowait \
                 -display none \
                 -netdev user,id=net0 \
                 -device e1000,netdev=net0 \
                 -device usb-ehci,id=ehci \
                 -device usb-tablet,bus=ehci.0 \
+                -drive file=/mnt/virtio-win.iso,media=cdrom,if=none,id=cd1 \
+                -device ide-cd,bus=ide.1,drive=cd1 \
                 -name "$VM" &
             fi
           fi
-          echo "VM started successfully."
-
-      - name: Create desktop VNC launcher
-        run: |
-          DESKTOP_PATH="/home/${USERNAME}/Desktop"
-          SCRIPT_PATH="${DESKTOP_PATH}/Connect_VNC.sh"
-          mkdir -p "$DESKTOP_PATH"
-          cat <<EOF > "$SCRIPT_PATH"
-          if [ "${{ env.CONNECTION_TYPE }}" = "Tailscale" ]; then
-            vncviewer ${{ env.CONNECTION_IP }}:5900 -FullScreen -MenuKey F8 &
-          else
-            if [ "${{ github.event.inputs.connection_program }}" = "VNC" ]; then
-              vncviewer ${{ env.CONNECTION_IP }} -FullScreen -MenuKey F8 &
-            else
-              vncviewer localhost:5900 -FullScreen -MenuKey F8 &
-            fi
-          fi
-          sleep 3 && wmctrl -r "VNC Viewer" -b add,above
-          EOF
-          chmod +x "$SCRIPT_PATH"
-          chown ${USERNAME}:${USERNAME} "$SCRIPT_PATH"
-          echo "Desktop launcher created at: $SCRIPT_PATH"
-
-      - name: Expose selected port with Ngrok
-        if: ${{ github.event.inputs.connection_method == 'ngrok' }}
-        run: |
-          echo "Starting Ngrok tunnel for selected connection method..."
-          if [ "${{ github.event.inputs.connection_program }}" = "RDP" ]; then
-            nohup ngrok tcp 3389 --region=eu > ngrok_rdp.log 2>&1 &
-          elif [ "${{ github.event.inputs.connection_program }}" = "VNC" ]; then
-            nohup ngrok tcp 5900 --region=eu > ngrok_vnc.log 2>&1 &
-          elif [ "${{ github.event.inputs.connection_program }}" = "NoMachine" ]; then
-            nohup ngrok tcp 4000 --region=eu > ngrok_nx.log 2>&1 &
-          else
-            echo "::error::Invalid connection_program. Choose RDP, VNC, or NoMachine."
-            exit 1
-          fi
-          sleep 10
-          curl --silent http://127.0.0.1:4040/api/tunnels > tunnels.json
-          RDP_URL=$(jq -r '.tunnels[] | select(.config.addr=="localhost:3389") | .public_url' tunnels.json)
-          VNC_URL=$(jq -r '.tunnels[] | select(.config.addr=="localhost:5900") | .public_url' tunnels.json)
-          NX_URL=$(jq -r '.tunnels[] | select(.config.addr=="localhost:4000") | .public_url' tunnels.json)
-          echo "RDP_URL=$RDP_URL" >> $GITHUB_ENV
-          echo "VNC_URL=$VNC_URL" >> $GITHUB_ENV
-          echo "NX_URL=$NX_URL" >> $GITHUB_ENV
-          if [ "${{ github.event.inputs.connection_program }}" = "RDP" ]; then
-            echo "RDP: $RDP_URL"
-            echo "CONNECTION_IP=$RDP_URL" >> $GITHUB_ENV
-          elif [ "${{ github.event.inputs.connection_program }}" = "VNC" ]; then
-            echo "VNC: $VNC_URL"
-            echo "CONNECTION_IP=$VNC_URL" >> $GITHUB_ENV
-          elif [ "${{ github.event.inputs.connection_program }}" = "NoMachine" ]; then
-            echo "NoMachine: $NX_URL"
-            echo "CONNECTION_IP=$NX_URL" >> $GITHUB_ENV
-          fi
-
-      - name: Connection Information and Keep Alive
-        run: |
-          echo "Thanks to MR.English2008 for this perfect work"
-          echo
-          echo "=== CONNECTION INFORMATION ==="
-          echo "RDP Username: ${USERNAME}"
-          echo "RDP Password: ${PASSWORD}"
-          echo
-          echo "Connection Type: ${{ env.CONNECTION_TYPE }}"
-          echo "Program Selected: ${{ github.event.inputs.connection_program }}"
-          echo
-          if [ "${{ env.CONNECTION_TYPE }}" = "Tailscale" ]; then
-            echo "Tailscale IP:"
-            sudo tailscale ip -4 || true
-            echo
-            echo ">>> RDP Connection: ${{ env.CONNECTION_IP }}"
-            echo ">>> VNC Connection: ${{ env.CONNECTION_IP }}"
-            echo ">>> NoMachine Connection: ${{ env.CONNECTION_IP }}"
-          else
-            if [ "${{ github.event.inputs.connection_program }}" = "RDP" ]; then
-              echo ">>> RDP (Ngrok): ${{ env.RDP_URL }}"
-            elif [ "${{ github.event.inputs.connection_program }}" = "VNC" ]; then
-              echo ">>> VNC (Ngrok): ${{ env.VNC_URL }}"
-            elif [ "${{ github.event.inputs.connection_program }}" = "NoMachine" ]; then
-              echo ">>> NoMachine (Ngrok): ${{ env.NX_URL }}"
-            fi
-          fi
-          echo
-          echo
-          echo  
-          echo "NOTE: if you connect with RDP or VNC you have to click on Connect_VNC.sh to open the qemu VM"  
-          echo  
-          echo "NOTE: if you did connect with RDP or NoMachine and open Connect_VNC.sh you will not be able to connect to VNC unless you disconnect from RDP or NoMachine"  
-          echo  
-          echo "NOTE: to disconnect type F8 from client keyboard a menu will appear click on Disconnect then you will be able to connect with VNC viewer again"  
-          echo  
-          echo "Have fun "
-          RUNTIME="${{ github.event.inputs.runtime }}"
-          echo "Keeping the session alive for ${RUNTIME} minutes..."
-          sleep $((RUNTIME * 60))
-          echo "Session ended after ${RUNTIME} minutes."
+          VNC_PASS="${{ github.event.inputs.vnc_password }}"
+          while ! nc -z localhost 4444; do
+            sleep 1
